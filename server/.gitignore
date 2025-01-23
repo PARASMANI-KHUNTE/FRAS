@@ -1,0 +1,64 @@
+# Node.js
+/node_modules/
+npm-debug.log
+
+# Environment files
+.env
+.env.*
+
+# Testing
+/coverage/
+
+# IDE and Editor files
+.vscode/
+*.suo
+*.user
+*.sln
+*.tmp
+*.bak
+*.suo
+*.user
+*.sln
+*.tmp
+*.bak
+*.vbp
+*.ncb
+*.opt
+*.plg
+*.user
+*.dsp
+*.dsw
+*.scc
+*.vbp
+*.ncb
+*.opt
+*.plg
+*.user
+*.dsp
+*.dsw
+*.scc
+*.suo
+*.user
+*.sln
+*.tmp
+*.bak
+*.vbp
+*.ncb
+*.opt
+*.plg
+*.user
+*.dsp
+*.dsw
+*.scc
+
+# Local configuration
+/config/
+*.local.js
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+*~

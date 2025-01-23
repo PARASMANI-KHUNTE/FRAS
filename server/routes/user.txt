@@ -1,0 +1,117 @@
+const express = require('express');
+const fs = require('fs');
+const { ref, uploadBytes, getDownloadURL } = require('firebase/storage');
+const faceapi = require('@vladmandic/face-api');
+const path = require('path');
+const User = require('../models/user'); 
+const upload = require('../middleware/upload'); 
+
+const router = express.Router();
+
+// Load Face API models
+const loadFaceApiModels = async () => {
+  const modelPath = path.join(__dirname, '../face-api.js-master/weights'); // Path to the models directory
+  await faceapi.nets.ssdMobilenetv1.loadFromDisk(modelPath);
+  await faceapi.nets.faceLandmark68Net.loadFromDisk(modelPath);
+  await faceapi.nets.faceRecognitionNet.loadFromDisk(modelPath);
+  console.log('Face API models loaded.');
+};
+
+// Ensure models are loaded before processing routes
+loadFaceApiModels();
+
+/**
+ * Route: POST /register
+ * Purpose: Register a new user with their face embedding
+ */
+router.post('/register', upload.single('image'), async (req, res) => {
+  try {
+    const { name, userId } = req.body;
+
+    if (!req.file) return res.status(400).send('Image is required.');
+    if (!name || !userId) return res.status(400).send('Name and User ID are required.');
+
+    // Read and process the uploaded image
+    const fileBuffer = fs.readFileSync(req.file.path);
+    const fileRef = ref(storage, `faces/${req.file.filename}`);
+    await uploadBytes(fileRef, fileBuffer);
+    const imageUrl = await getDownloadURL(fileRef);
+
+    // Detect face and extract embedding
+    const image = await faceapi.bufferToImage(fileBuffer);
+    const detection = await faceapi
+      .detectSingleFace(image)
+      .withFaceLandmarks()
+      .withFaceDescriptor();
+
+    if (!detection) return res.status(400).send('No face detected.');
+
+    const faceEmbedding = Array.from(detection.descriptor);
+
+    // Save user data to MongoDB
+    const newUser = new User({ name, userId, imageUrl, faceEmbedding });
+    await newUser.save();
+
+    res.status(201).send({
+      message: 'User registered successfully!',
+      user: { name, userId, imageUrl },
+    });
+  } catch (error) {
+    console.error('Error in /register route:', error.message);
+    res.status(500).send('Internal server error during registration.');
+  }
+});
+
+/**
+ * Route: POST /verify
+ * Purpose: Verify a user's face against registered users
+ */
+router.post('/verify', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).send('Image is required.');
+
+    // Read and process the uploaded image
+    const fileBuffer = fs.readFileSync(req.file.path);
+    const fileRef = ref(storage, `temp/${req.file.filename}`);
+    await uploadBytes(fileRef, fileBuffer);
+
+    // Detect face and extract embedding
+    const image = await faceapi.bufferToImage(fileBuffer);
+    const detection = await faceapi
+      .detectSingleFace(image)
+      .withFaceLandmarks()
+      .withFaceDescriptor();
+
+    if (!detection) return res.status(400).send('No face detected.');
+
+    const newEmbedding = Array.from(detection.descriptor);
+
+    // Retrieve registered users and compare embeddings
+    const users = await User.find();
+    let bestMatch = null;
+    let bestDistance = Infinity;
+
+    for (const user of users) {
+      const distance = faceapi.euclideanDistance(newEmbedding, user.faceEmbedding);
+      if (distance < 0.6 && distance < bestDistance) {
+        bestDistance = distance;
+        bestMatch = user;
+      }
+    }
+
+    if (bestMatch) {
+      res.status(200).send({
+        message: 'Face matched successfully!',
+        user: { name: bestMatch.name, userId: bestMatch.userId, imageUrl: bestMatch.imageUrl },
+        distance: bestDistance,
+      });
+    } else {
+      res.status(401).send('Face not recognized.');
+    }
+  } catch (error) {
+    console.error('Error in /verify route:', error.message);
+    res.status(500).send('Internal server error during verification.');
+  }
+});
+
+module.exports = router;
