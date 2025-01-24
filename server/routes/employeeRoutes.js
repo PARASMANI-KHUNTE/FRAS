@@ -8,356 +8,358 @@ const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
 const canvas = require("canvas");
-const faceapi = require("@vladmandic/face-api");
-
 const router = express.Router();
 
-// Configure Multer for image uploads
-const upload = multer({ dest: "uploads/" });
+// const faceapi = require("@vladmandic/face-api");
 
-// Load Face-api models
-const MODEL_PATH = path.join(__dirname, "./face-api.js-master/weights");
-async function loadModels() {
-  if (!fs.existsSync(MODEL_PATH)) {
-    console.error("Model path does not exist:", MODEL_PATH);
-    process.exit(1);
-  }
-  await faceapi.nets.ssdMobilenetv1.loadFromDisk(MODEL_PATH);
-  await faceapi.nets.faceLandmark68Net.loadFromDisk(MODEL_PATH);
-  await faceapi.nets.faceRecognitionNet.loadFromDisk(MODEL_PATH);
-  console.log("Face-api models loaded successfully.");
-}
-loadModels(); // Load models when the server starts
+// const router = express.Router();
 
-// Utility function to calculate distance between embeddings
-function calculateDistance(embedding1, embedding2) {
-  return Math.sqrt(
-    embedding1.reduce((sum, val, i) => sum + (val - embedding2[i]) ** 2, 0)
-  );
-}
+// // Configure Multer for image uploads
+// const upload = multer({ dest: "uploads/" });
 
-// Register Employee with Face Recognition
-router.post(
-  "/register",
-  upload.single("image"),
-  asyncHandler(async (req, res) => {
-    const { Name, Email, Phone, Password, Shift, Task } = req.body;
+// // Load Face-api models
+// const MODEL_PATH = path.join(__dirname, "./face-api.js-master/weights");
+// async function loadModels() {
+//   if (!fs.existsSync(MODEL_PATH)) {
+//     console.error("Model path does not exist:", MODEL_PATH);
+//     process.exit(1);
+//   }
+//   await faceapi.nets.ssdMobilenetv1.loadFromDisk(MODEL_PATH);
+//   await faceapi.nets.faceLandmark68Net.loadFromDisk(MODEL_PATH);
+//   await faceapi.nets.faceRecognitionNet.loadFromDisk(MODEL_PATH);
+//   console.log("Face-api models loaded successfully.");
+// }
+// loadModels(); // Load models when the server starts
 
-    // Check if the employee already exists (by email)
-    const employeeExists = await Employee.findOne({ Email });
-    if (employeeExists) {
-      res.status(400);
-      throw new Error("Employee with this email already exists.");
-    }
+// // Utility function to calculate distance between embeddings
+// function calculateDistance(embedding1, embedding2) {
+//   return Math.sqrt(
+//     embedding1.reduce((sum, val, i) => sum + (val - embedding2[i]) ** 2, 0)
+//   );
+// }
 
-    if (!req.file) {
-      res.status(400);
-      throw new Error("Profile image is required for registration.");
-    }
+// // Register Employee with Face Recognition
+// router.post(
+//   "/register",
+//   upload.single("image"),
+//   asyncHandler(async (req, res) => {
+//     const { Name, Email, Phone, Password, Shift, Task } = req.body;
 
-    const filePath = req.file.path;
+//     // Check if the employee already exists (by email)
+//     const employeeExists = await Employee.findOne({ Email });
+//     if (employeeExists) {
+//       res.status(400);
+//       throw new Error("Employee with this email already exists.");
+//     }
 
-    try {
-      const img = await canvas.loadImage(filePath);
-      const detections = await faceapi
-        .detectSingleFace(img)
-        .withFaceLandmarks()
-        .withFaceDescriptor();
+//     if (!req.file) {
+//       res.status(400);
+//       throw new Error("Profile image is required for registration.");
+//     }
 
-      if (!detections) {
-        res.status(400);
-        throw new Error("No face detected. Please provide a clear image.");
-      }
+//     const filePath = req.file.path;
 
-      const faceEmbedding = Array.from(detections.descriptor);
+//     try {
+//       const img = await canvas.loadImage(filePath);
+//       const detections = await faceapi
+//         .detectSingleFace(img)
+//         .withFaceLandmarks()
+//         .withFaceDescriptor();
 
-      // Check for duplicate face embeddings
-      const employees = await Employee.find({ faceEmbedding: { $exists: true } });
-      for (const employee of employees) {
-        const distance = calculateDistance(employee.faceEmbedding, faceEmbedding);
-        if (distance < 0.6) {
-          res.status(400);
-          throw new Error("Face already registered. Please use a different face.");
-        }
-      }
+//       if (!detections) {
+//         res.status(400);
+//         throw new Error("No face detected. Please provide a clear image.");
+//       }
 
-      const hashedPassword = await bcrypt.hash(Password, 10);
+//       const faceEmbedding = Array.from(detections.descriptor);
 
-      // Create a new employee
-      const employee = await Employee.create({
-        Name,
-        Email,
-        Phone,
-        Password: hashedPassword,
-        Shift,
-        Task,
-        faceEmbedding,
-        ProfileUrl: `/uploads/${req.file.filename}`,
-      });
+//       // Check for duplicate face embeddings
+//       const employees = await Employee.find({ faceEmbedding: { $exists: true } });
+//       for (const employee of employees) {
+//         const distance = calculateDistance(employee.faceEmbedding, faceEmbedding);
+//         if (distance < 0.6) {
+//           res.status(400);
+//           throw new Error("Face already registered. Please use a different face.");
+//         }
+//       }
 
-      const token = jwt.sign({ id: employee._id }, process.env.JWT_SECRET, {
-        expiresIn: "1h",
-      });
+//       const hashedPassword = await bcrypt.hash(Password, 10);
 
-      res.status(201).json({ token, employee });
-    } catch (error) {
-      console.error("Error during registration:", error);
-      res.status(500);
-      throw new Error("Face registration failed.");
-    } finally {
-      // Clean up uploaded file
-      fs.promises.unlink(filePath).catch((err) =>
-        console.error("Error cleaning up file:", err)
-      );
-    }
-  })
-);
+//       // Create a new employee
+//       const employee = await Employee.create({
+//         Name,
+//         Email,
+//         Phone,
+//         Password: hashedPassword,
+//         Shift,
+//         Task,
+//         faceEmbedding,
+//         ProfileUrl: `/uploads/${req.file.filename}`,
+//       });
 
-// Login Employee with Credentials or Face Recognition
-router.post(
-    "/login",
-    upload.single("image"),
-    asyncHandler(async (req, res) => {
-      const { Email, Password } = req.body; // Credentials
-      const filePath = req.file ? req.file.path : null; // Face image (if provided)
+//       const token = jwt.sign({ id: employee._id }, process.env.JWT_SECRET, {
+//         expiresIn: "1h",
+//       });
+
+//       res.status(201).json({ token, employee });
+//     } catch (error) {
+//       console.error("Error during registration:", error);
+//       res.status(500);
+//       throw new Error("Face registration failed.");
+//     } finally {
+//       // Clean up uploaded file
+//       fs.promises.unlink(filePath).catch((err) =>
+//         console.error("Error cleaning up file:", err)
+//       );
+//     }
+//   })
+// );
+
+// // Login Employee with Credentials or Face Recognition
+// router.post(
+//     "/login",
+//     upload.single("image"),
+//     asyncHandler(async (req, res) => {
+//       const { Email, Password } = req.body; // Credentials
+//       const filePath = req.file ? req.file.path : null; // Face image (if provided)
   
-      try {
-        if (Email && Password) {
-          // Login using email and password
-          const employee = await Employee.findOne({ Email });
-          if (!employee || !(await bcrypt.compare(Password, employee.Password))) {
-            res.status(401);
-            throw new Error("Invalid email or password.");
-          }
+//       try {
+//         if (Email && Password) {
+//           // Login using email and password
+//           const employee = await Employee.findOne({ Email });
+//           if (!employee || !(await bcrypt.compare(Password, employee.Password))) {
+//             res.status(401);
+//             throw new Error("Invalid email or password.");
+//           }
   
-          const token = jwt.sign({ id: employee._id }, process.env.JWT_SECRET, {
-            expiresIn: "1h",
-          });
+//           const token = jwt.sign({ id: employee._id }, process.env.JWT_SECRET, {
+//             expiresIn: "1h",
+//           });
   
-          return res.json({ token, employee });
-        } else if (filePath) {
-          // Login using face recognition
-          const img = await canvas.loadImage(filePath);
-          const detections = await faceapi
-            .detectSingleFace(img)
-            .withFaceLandmarks()
-            .withFaceDescriptor();
+//           return res.json({ token, employee });
+//         } else if (filePath) {
+//           // Login using face recognition
+//           const img = await canvas.loadImage(filePath);
+//           const detections = await faceapi
+//             .detectSingleFace(img)
+//             .withFaceLandmarks()
+//             .withFaceDescriptor();
   
-          if (!detections) {
-            res.status(400);
-            throw new Error("No face detected. Please provide a clear image.");
-          }
+//           if (!detections) {
+//             res.status(400);
+//             throw new Error("No face detected. Please provide a clear image.");
+//           }
   
-          const newEmbedding = Array.from(detections.descriptor);
+//           const newEmbedding = Array.from(detections.descriptor);
   
-          // Search for a matching face in the database
-          const employees = await Employee.find({ faceEmbedding: { $exists: true } });
-          let bestMatch = null;
-          let bestDistance = Infinity;
+//           // Search for a matching face in the database
+//           const employees = await Employee.find({ faceEmbedding: { $exists: true } });
+//           let bestMatch = null;
+//           let bestDistance = Infinity;
   
-          for (const employee of employees) {
-            const distance = calculateDistance(employee.faceEmbedding, newEmbedding);
-            if (distance < bestDistance) {
-              bestDistance = distance;
-              bestMatch = employee;
-            }
-          }
+//           for (const employee of employees) {
+//             const distance = calculateDistance(employee.faceEmbedding, newEmbedding);
+//             if (distance < bestDistance) {
+//               bestDistance = distance;
+//               bestMatch = employee;
+//             }
+//           }
   
-          const THRESHOLD = 0.6; // Adjust as necessary
-          if (bestMatch && bestDistance < THRESHOLD) {
-            const token = jwt.sign({ id: bestMatch._id }, process.env.JWT_SECRET, {
-              expiresIn: "1h",
-            });
-            return res.json({ token, employee: bestMatch });
-          } else {
-            res.status(401);
-            throw new Error("Face does not match any registered user.");
-          }
-        } else {
-          // No credentials or face image provided
-          res.status(400);
-          throw new Error("Either credentials or face image must be provided for login.");
-        }
-      } catch (error) {
-        console.error("Error during login:", error);
-        res.status(500).send("Login failed.");
-      } finally {
-        // Clean up the uploaded file if it exists
-        if (filePath) {
-          fs.promises.unlink(filePath).catch((err) =>
-            console.error("Error cleaning up file:", err)
-          );
-        }
-      }
-    })
-  );
+//           const THRESHOLD = 0.6; // Adjust as necessary
+//           if (bestMatch && bestDistance < THRESHOLD) {
+//             const token = jwt.sign({ id: bestMatch._id }, process.env.JWT_SECRET, {
+//               expiresIn: "1h",
+//             });
+//             return res.json({ token, employee: bestMatch });
+//           } else {
+//             res.status(401);
+//             throw new Error("Face does not match any registered user.");
+//           }
+//         } else {
+//           // No credentials or face image provided
+//           res.status(400);
+//           throw new Error("Either credentials or face image must be provided for login.");
+//         }
+//       } catch (error) {
+//         console.error("Error during login:", error);
+//         res.status(500).send("Login failed.");
+//       } finally {
+//         // Clean up the uploaded file if it exists
+//         if (filePath) {
+//           fs.promises.unlink(filePath).catch((err) =>
+//             console.error("Error cleaning up file:", err)
+//           );
+//         }
+//       }
+//     })
+//   );
   
 
-// Check-in Route
-router.post(
-    "/check-in",
-    upload.single("image"),
-    asyncHandler(async (req, res) => {
-      if (!req.file) {
-        res.status(400);
-        throw new Error("Face image is required for check-in.");
-      }
+// // Check-in Route
+// router.post(
+//     "/check-in",
+//     upload.single("image"),
+//     asyncHandler(async (req, res) => {
+//       if (!req.file) {
+//         res.status(400);
+//         throw new Error("Face image is required for check-in.");
+//       }
   
-      const filePath = req.file.path;
+//       const filePath = req.file.path;
   
-      try {
-        const img = await canvas.loadImage(filePath);
-        const detections = await faceapi
-          .detectSingleFace(img)
-          .withFaceLandmarks()
-          .withFaceDescriptor();
+//       try {
+//         const img = await canvas.loadImage(filePath);
+//         const detections = await faceapi
+//           .detectSingleFace(img)
+//           .withFaceLandmarks()
+//           .withFaceDescriptor();
   
-        if (!detections) {
-          res.status(400);
-          throw new Error("No face detected. Please provide a clear image.");
-        }
+//         if (!detections) {
+//           res.status(400);
+//           throw new Error("No face detected. Please provide a clear image.");
+//         }
   
-        const newEmbedding = Array.from(detections.descriptor);
+//         const newEmbedding = Array.from(detections.descriptor);
   
-        // Find the best matching employee
-        const employees = await Employee.find({ faceEmbedding: { $exists: true } });
-        let bestMatch = null;
-        let bestDistance = Infinity;
+//         // Find the best matching employee
+//         const employees = await Employee.find({ faceEmbedding: { $exists: true } });
+//         let bestMatch = null;
+//         let bestDistance = Infinity;
   
-        for (const employee of employees) {
-          const distance = calculateDistance(employee.faceEmbedding, newEmbedding);
-          if (distance < bestDistance) {
-            bestDistance = distance;
-            bestMatch = employee;
-          }
-        }
+//         for (const employee of employees) {
+//           const distance = calculateDistance(employee.faceEmbedding, newEmbedding);
+//           if (distance < bestDistance) {
+//             bestDistance = distance;
+//             bestMatch = employee;
+//           }
+//         }
   
-        const THRESHOLD = 0.6;
-        if (bestMatch && bestDistance < THRESHOLD) {
-          // Verify if already checked in
-          const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-          const alreadyCheckedIn = bestMatch.Check_in.some(
-            (check) => check.date.toISOString().split("T")[0] === today
-          );
+//         const THRESHOLD = 0.6;
+//         if (bestMatch && bestDistance < THRESHOLD) {
+//           // Verify if already checked in
+//           const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+//           const alreadyCheckedIn = bestMatch.Check_in.some(
+//             (check) => check.date.toISOString().split("T")[0] === today
+//           );
   
-          if (alreadyCheckedIn) {
-            res.status(400);
-            throw new Error("Employee already checked in for the day.");
-          }
+//           if (alreadyCheckedIn) {
+//             res.status(400);
+//             throw new Error("Employee already checked in for the day.");
+//           }
   
-          // Add check-in time
-          bestMatch.Check_in.push({
-            date: new Date(),
-            time: new Date().toLocaleTimeString(),
-          });
-          await bestMatch.save();
+//           // Add check-in time
+//           bestMatch.Check_in.push({
+//             date: new Date(),
+//             time: new Date().toLocaleTimeString(),
+//           });
+//           await bestMatch.save();
   
-          return res.json({
-            message: "Check-in successful.",
-            employee: bestMatch,
-          });
-        } else {
-          res.status(401);
-          throw new Error("Face does not match any registered user.");
-        }
-      } catch (error) {
-        console.error("Error during check-in:", error);
-        res.status(500).send("Check-in failed.");
-      } finally {
-        // Clean up the uploaded file
-        fs.promises.unlink(filePath).catch((err) =>
-          console.error("Error cleaning up file:", err)
-        );
-      }
-    })
-  );
+//           return res.json({
+//             message: "Check-in successful.",
+//             employee: bestMatch,
+//           });
+//         } else {
+//           res.status(401);
+//           throw new Error("Face does not match any registered user.");
+//         }
+//       } catch (error) {
+//         console.error("Error during check-in:", error);
+//         res.status(500).send("Check-in failed.");
+//       } finally {
+//         // Clean up the uploaded file
+//         fs.promises.unlink(filePath).catch((err) =>
+//           console.error("Error cleaning up file:", err)
+//         );
+//       }
+//     })
+//   );
   
-  // Check-out Route
-  router.post(
-    "/check-out",
-    upload.single("image"),
-    asyncHandler(async (req, res) => {
-      if (!req.file) {
-        res.status(400);
-        throw new Error("Face image is required for check-out.");
-      }
+  // // Check-out Route
+  // router.post(
+  //   "/check-out",
+  //   upload.single("image"),
+  //   asyncHandler(async (req, res) => {
+  //     if (!req.file) {
+  //       res.status(400);
+  //       throw new Error("Face image is required for check-out.");
+  //     }
   
-      const filePath = req.file.path;
+  //     const filePath = req.file.path;
   
-      try {
-        const img = await canvas.loadImage(filePath);
-        const detections = await faceapi
-          .detectSingleFace(img)
-          .withFaceLandmarks()
-          .withFaceDescriptor();
+  //     try {
+  //       const img = await canvas.loadImage(filePath);
+  //       const detections = await faceapi
+  //         .detectSingleFace(img)
+  //         .withFaceLandmarks()
+  //         .withFaceDescriptor();
   
-        if (!detections) {
-          res.status(400);
-          throw new Error("No face detected. Please provide a clear image.");
-        }
+  //       if (!detections) {
+  //         res.status(400);
+  //         throw new Error("No face detected. Please provide a clear image.");
+  //       }
   
-        const newEmbedding = Array.from(detections.descriptor);
+  //       const newEmbedding = Array.from(detections.descriptor);
   
-        // Find the best matching employee
-        const employees = await Employee.find({ faceEmbedding: { $exists: true } });
-        let bestMatch = null;
-        let bestDistance = Infinity;
+  //       // Find the best matching employee
+  //       const employees = await Employee.find({ faceEmbedding: { $exists: true } });
+  //       let bestMatch = null;
+  //       let bestDistance = Infinity;
   
-        for (const employee of employees) {
-          const distance = calculateDistance(employee.faceEmbedding, newEmbedding);
-          if (distance < bestDistance) {
-            bestDistance = distance;
-            bestMatch = employee;
-          }
-        }
+  //       for (const employee of employees) {
+  //         const distance = calculateDistance(employee.faceEmbedding, newEmbedding);
+  //         if (distance < bestDistance) {
+  //           bestDistance = distance;
+  //           bestMatch = employee;
+  //         }
+  //       }
   
-        const THRESHOLD = 0.6;
-        if (bestMatch && bestDistance < THRESHOLD) {
-          // Verify if the employee has checked in but not checked out
-          const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-          const alreadyCheckedIn = bestMatch.Check_in.some(
-            (check) => check.date.toISOString().split("T")[0] === today
-          );
-          const alreadyCheckedOut = bestMatch.Check_out.some(
-            (check) => check.date.toISOString().split("T")[0] === today
-          );
+  //       const THRESHOLD = 0.6;
+  //       if (bestMatch && bestDistance < THRESHOLD) {
+  //         // Verify if the employee has checked in but not checked out
+  //         const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+  //         const alreadyCheckedIn = bestMatch.Check_in.some(
+  //           (check) => check.date.toISOString().split("T")[0] === today
+  //         );
+  //         const alreadyCheckedOut = bestMatch.Check_out.some(
+  //           (check) => check.date.toISOString().split("T")[0] === today
+  //         );
   
-          if (!alreadyCheckedIn) {
-            res.status(400);
-            throw new Error("Employee has not checked in today.");
-          }
+  //         if (!alreadyCheckedIn) {
+  //           res.status(400);
+  //           throw new Error("Employee has not checked in today.");
+  //         }
   
-          if (alreadyCheckedOut) {
-            res.status(400);
-            throw new Error("Employee already checked out for the day.");
-          }
+  //         if (alreadyCheckedOut) {
+  //           res.status(400);
+  //           throw new Error("Employee already checked out for the day.");
+  //         }
   
-          // Add check-out time
-          bestMatch.Check_out.push({
-            date: new Date(),
-            time: new Date().toLocaleTimeString(),
-          });
-          await bestMatch.save();
+  //         // Add check-out time
+  //         bestMatch.Check_out.push({
+  //           date: new Date(),
+  //           time: new Date().toLocaleTimeString(),
+  //         });
+  //         await bestMatch.save();
   
-          return res.json({
-            message: "Check-out successful.",
-            employee: bestMatch,
-          });
-        } else {
-          res.status(401);
-          throw new Error("Face does not match any registered user.");
-        }
-      } catch (error) {
-        console.error("Error during check-out:", error);
-        res.status(500).send("Check-out failed.");
-      } finally {
-        // Clean up the uploaded file
-        fs.promises.unlink(filePath).catch((err) =>
-          console.error("Error cleaning up file:", err)
-        );
-      }
-    })
-  );
+  //         return res.json({
+  //           message: "Check-out successful.",
+  //           employee: bestMatch,
+  //         });
+  //       } else {
+  //         res.status(401);
+  //         throw new Error("Face does not match any registered user.");
+  //       }
+  //     } catch (error) {
+  //       console.error("Error during check-out:", error);
+  //       res.status(500).send("Check-out failed.");
+  //     } finally {
+  //       // Clean up the uploaded file
+  //       fs.promises.unlink(filePath).catch((err) =>
+  //         console.error("Error cleaning up file:", err)
+  //       );
+  //     }
+  //   })
+  // );
   
 
 
